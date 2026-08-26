@@ -17,9 +17,9 @@ no coordinator required.**
 | | |
 |---|---|
 | Repo | `github.com/Ugly-Tool/resolver-test` |
-| Deployed commit | `3cc241c9d9c74f61787d93150a775b839f7e6bf8` (`3cc241c`) |
-| Git tag | `run-01` (annotated, points at the commit above) |
+| Deployed commit | `3cc241c9d9c74f61787d93150a775b839f7e6bf8` (`3cc241c`) — **immutable freeze anchor** |
 | Frozen artifact | `index.html` · **9619 bytes** · `sha256:351d94e7b0798027b936cbcace1df183b6c680e56ccd8331e4214fadb425f6f5` |
+| Git tag / release | `run-01` intended at the commit above — **not yet created**: this session can push branches but not tag refs (HTTP 403). Create it via GitHub → Releases → tag `run-01` @ `3cc241c`. The commit SHA + sha256 already freeze the exact bytes; the tag is only a friendly alias. |
 | Deployment URL | `https://resolver-test.vercel.app/` *(confirm exact project domain)* |
 | Resolver tool | `list_provider_surfaces` — stateless directory, one call, returns 2 surfaces |
 | Committed at | 2026-08-26T21:55:42Z |
