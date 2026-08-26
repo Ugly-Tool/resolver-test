@@ -20,7 +20,7 @@ no coordinator required.**
 | Deployed commit | `3cc241c9d9c74f61787d93150a775b839f7e6bf8` (`3cc241c`) — **immutable freeze anchor** |
 | Frozen artifact | `index.html` · **9619 bytes** · `sha256:351d94e7b0798027b936cbcace1df183b6c680e56ccd8331e4214fadb425f6f5` |
 | Git tag / release | `run-01` intended at the commit above — **not yet created**: this session can push branches but not tag refs (HTTP 403). Create it via GitHub → Releases → tag `run-01` @ `3cc241c`. The commit SHA + sha256 already freeze the exact bytes; the tag is only a friendly alias. |
-| Deployment URL | `https://resolver-test.vercel.app/` *(confirm exact project domain)* |
+| Deployment URL | `https://resolver-test-mu.vercel.app/` |
 | Resolver tool | `list_provider_surfaces` — stateless directory, one call, returns 2 surfaces |
 | Committed at | 2026-08-26T21:55:42Z |
 | Archived at | 2026-08-26T22:12:40Z |
@@ -36,7 +36,7 @@ carried across the navigation was carried by the **agent**, not the resolver.
 | Dial | 1 — directory returned whole, once; agent self-decomposes + self-sequences |
 | Provider A | **Valentin Coffee** — `valentincoffee.cafe` — order a drink |
 | Provider B | **Timothy George** — `timothygeorge.design` — book an appointment |
-| Agent | ChatGPT — *build/version/mode: TBD (fill from the session)* |
+| Agent | ChatGPT browser (agent mode; composer showed model indicator "5.5") · worked **1m 21s** · single prompt, no follow-up |
 
 ## Observed result (the four instrumented dimensions — all clean)
 
@@ -56,18 +56,18 @@ state.*
 
 ---
 
-## Archived evidence
+## Archived evidence — `runs/run-01/`
 
-Provenance artifacts from the live ChatGPT session. **Status: pending attachment** — paste/attach these and
-they'll be committed into `runs/run-01/`:
-
-- [ ] `prompt.txt` — the **exact** objective prompt given to ChatGPT (verbatim, one prompt).
-- [ ] `final-response.md` — ChatGPT's final response text (both provider results as returned).
-- [ ] `tool-use-provenance.md` — the tool-call trail: `list_provider_surfaces` (resolver) + the native
-      provider tools it discovered/called at each origin, in order.
-- [ ] `screenshots/` — the run screenshots (resolver page, each provider, final result).
-
-*(The prompt in `README.md` is the suggested wording; replace with the exact text used if it differed.)*
+- [x] **`prompt.txt`** — the exact single prompt: *"Order a coffee from Valentin and book a hair appointment
+      at Timothy George. Use the site tools available to you to complete both tasks"*. No follow-up.
+- [x] **`final-response.md`** — ChatGPT's verbatim final response (both results: Valentin **VC-5866** $3.50;
+      Timothy George **TG-5797** $45).
+- [x] **`tool-use-provenance.md`** — the full 11-call trail across the three origins. Key line:
+      `webmcp_list_tools` fires **once per origin** (rediscovery after each navigation); `list_provider_surfaces`
+      fires **exactly once** (stateless resolver, self-carry).
+- [x] **`screenshots.md`** — manifest describing the three run screenshots. **The PNG files still need to be
+      dropped into `runs/run-01/screenshots/`** (their bytes couldn't be written from the chat; add via a
+      commit or the GitHub UI).
 
 ## Conclusion & next (not yet — do not modify the resolver)
 
