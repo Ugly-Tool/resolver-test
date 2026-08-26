@@ -1,0 +1,168 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>WebMCP Resolver Spike</title>
+<style>
+  :root { color-scheme: light dark; --fg:#111; --bg:#fafafa; --card:#fff; --line:#e5e5e5; --mut:#666; --ok:#0a7f4b; --warn:#a15c00; --bad:#b3261e; --mono:ui-monospace,SFMono-Regular,Menlo,monospace; }
+  @media (prefers-color-scheme: dark){ :root{ --fg:#eee; --bg:#0f0f10; --card:#171718; --line:#2a2a2c; --mut:#9a9a9a; } }
+  * { box-sizing:border-box; } body { margin:0; font:15px/1.5 system-ui,sans-serif; color:var(--fg); background:var(--bg); }
+  main { max-width:820px; margin:0 auto; padding:28px 20px 64px; }
+  h1 { font-size:22px; margin:0 0 4px; } .sub { color:var(--mut); margin:0 0 22px; }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:16px 18px; margin:14px 0; }
+  h2 { font-size:14px; text-transform:uppercase; letter-spacing:.04em; color:var(--mut); margin:0 0 10px; }
+  code, .mono { font-family:var(--mono); font-size:13px; } .pill { display:inline-block; padding:2px 8px; border:1px solid var(--line); border-radius:999px; font-size:12px; }
+  table { width:100%; border-collapse:collapse; font-size:13px; } td,th { text-align:left; padding:6px 8px; border-bottom:1px solid var(--line); vertical-align:top; } th { color:var(--mut); font-weight:600; }
+  #status { font-weight:600; } #status.ok{color:var(--ok)} #status.bad{color:var(--bad)}
+  ol#log { margin:0; padding-left:0; list-style:none; font-family:var(--mono); font-size:12.5px; max-height:320px; overflow:auto; }
+  ol#log li { padding:3px 0; border-bottom:1px dashed var(--line); }
+  ol#log .k { display:inline-block; min-width:132px; color:var(--mut); }
+  .kind-tool_called { color:var(--ok); font-weight:600; } .kind-webmcp_absent{ color:var(--warn); }
+  .row { display:flex; gap:8px; flex-wrap:wrap; } button { font:inherit; padding:6px 12px; border:1px solid var(--line); background:var(--card); color:var(--fg); border-radius:8px; cursor:pointer; }
+  .muted { color:var(--mut); font-size:13px; }
+</style>
+</head>
+<body>
+<main>
+  <h1>WebMCP Resolver Spike</h1>
+  <p class="sub">A <strong>stateless</strong> surface resolver. It publishes exactly one WebMCP tool —
+    a directory lookup — and holds <strong>no journey state</strong>. It is the only scaffolding in the
+    spike: everything else is a generic browser agent + the live provider surfaces.</p>
+
+  <div class="card">
+    <h2>WebMCP status</h2>
+    <p><span id="status">checking…</span> <span class="muted" id="status-detail"></span></p>
+    <p class="muted">The one tool registered here: <code id="tool-name">list_provider_surfaces</code> —
+      returns the directory below and nothing else. No capability stepping, no cursor, no coordinator.</p>
+  </div>
+
+  <div class="card">
+    <h2>Directory this resolver returns (the two independent providers)</h2>
+    <table id="dir"></table>
+    <p class="muted">Each is an independent origin that registers its own native WebMCP tools <em>after
+      navigation</em>. The resolver only tells the agent where they are — it never carries the task.</p>
+  </div>
+
+  <div class="card">
+    <h2>Instrumentation — this resolver's own event log</h2>
+    <div class="row" style="margin-bottom:10px">
+      <button id="copy">Copy log</button>
+      <button id="clear">Clear log</button>
+      <span class="muted">Also mirrored to the browser console with the <code>[RESOLVER]</code> prefix, and
+        persisted in this origin's <code>localStorage</code> so it accumulates across revisits.</span>
+    </div>
+    <ol id="log"></ol>
+  </div>
+</main>
+
+<script>
+(() => {
+  'use strict';
+  // ── The stateless directory. Dial-1, two-provider, independent-task trajectory. ────────────────────
+  // Points at the EXISTING live provider surfaces (their real origins). Their tool lists are declared
+  // here only so a human can read them; the agent must DISCOVER them natively after it navigates.
+  const DIRECTORY = {
+    resolver: 'webmcp-resolver-spike',
+    note: 'Stateless directory. The agent chooses order + sequence itself; this resolver holds no state.',
+    surfaces: [
+      {
+        id: 'valentin_coffee', name: 'Valentin Coffee', origin: 'valentincoffee.cafe',
+        tool_url: 'https://valentincoffee.cafe', serves: 'order a coffee drink',
+        native_tools_expected: ['read_menu', 'confirm_price', 'order_latte', 'order_black_coffee', 'order_cafe_mocha'],
+      },
+      {
+        id: 'timothy_george', name: 'Timothy George', origin: 'timothygeorge.design',
+        tool_url: 'https://timothygeorge.design', serves: 'book a design/salon appointment',
+        native_tools_expected: ['read_menu_items', 'find_available_appointment', 'book_appointment'],
+      },
+    ],
+  };
+
+  // ── Instrumentation ────────────────────────────────────────────────────────────────────────────────
+  const LS_KEY = 'resolver-spike-log';
+  const logEl = document.getElementById('log');
+  const load = () => { try { return JSON.parse(localStorage.getItem(LS_KEY) || '[]'); } catch { return []; } };
+  const save = (a) => { try { localStorage.setItem(LS_KEY, JSON.stringify(a.slice(-200))); } catch {} };
+  let events = load();
+  function render() {
+    logEl.innerHTML = '';
+    for (const e of events) {
+      const li = document.createElement('li');
+      li.className = 'kind-' + e.kind;
+      li.innerHTML = '<span class="k">' + e.t + '</span>' +
+        '<strong>' + e.kind + '</strong>' + (e.detail ? ' — ' + escapeHtml(e.detail) : '');
+      logEl.appendChild(li);
+    }
+    logEl.scrollTop = logEl.scrollHeight;
+  }
+  function escapeHtml(s){ return String(s).replace(/[&<>]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[c])); }
+  function logEvent(kind, detail) {
+    const e = { t: new Date().toISOString().slice(11, 23), kind, detail: detail || '' };
+    events.push(e); save(events); render();
+    // Greppable console line for whoever is watching the agent's browser console.
+    console.info('[RESOLVER]', e.t, kind, detail || '');
+  }
+  document.getElementById('copy').onclick = () =>
+    navigator.clipboard?.writeText(events.map(e => `${e.t} ${e.kind} ${e.detail}`).join('\n'));
+  document.getElementById('clear').onclick = () => { events = []; save(events); render(); logEvent('log_cleared'); };
+
+  // Render the human-readable directory table.
+  const dirEl = document.getElementById('dir');
+  dirEl.innerHTML = '<tr><th>Surface</th><th>Origin (navigate here)</th><th>Serves</th><th>Native tools expected</th></tr>' +
+    DIRECTORY.surfaces.map(s =>
+      `<tr><td><strong>${s.name}</strong></td><td class="mono">${s.tool_url}</td><td>${s.serves}</td>` +
+      `<td class="mono">${s.native_tools_expected.join(', ')}</td></tr>`).join('');
+
+  render();
+  logEvent('page_loaded', 'referrer=' + (document.referrer || '(none)'));
+
+  // ── WebMCP registration (native; feature-detected; no-op when absent) ───────────────────────────────
+  const wrap = (value) => ({ content: [{ type: 'text', text: JSON.stringify(value, null, 2) }] });
+  const usable = (c) => c && typeof c.registerTool === 'function';
+  const mc =
+    (typeof document !== 'undefined' && usable(document.modelContext) && document.modelContext) ||
+    (typeof navigator !== 'undefined' && usable(navigator.modelContext) && navigator.modelContext) ||
+    (typeof navigator !== 'undefined' && usable(navigator.modelContextTesting) && navigator.modelContextTesting) ||
+    null;
+
+  const statusEl = document.getElementById('status');
+  const detailEl = document.getElementById('status-detail');
+  if (!mc) {
+    statusEl.textContent = 'WebMCP not detected';
+    statusEl.className = 'bad';
+    detailEl.textContent = '(no document.modelContext / navigator.modelContext). Page is inert for humans; a WebMCP-capable agent is required to exercise the tool.';
+    logEvent('webmcp_absent', 'no modelContext on this browser');
+    return;
+  }
+
+  try {
+    mc.registerTool({
+      name: 'list_provider_surfaces',
+      description:
+        'Return the directory of independent provider surfaces available for this task — each with its ' +
+        'origin/URL to navigate to and the native WebMCP tools it is expected to register once you arrive. ' +
+        'This resolver is STATELESS: it does not track your objective, your progress, or any step. You ' +
+        'decide the order, navigate to each surface yourself, and after arriving you must DISCOVER and call ' +
+        'that surface’s own native tools. Call this once at the start; carry the objective yourself.',
+      inputSchema: { type: 'object', properties: {}, required: [], additionalProperties: false },
+      async execute() {
+        logEvent('tool_called', 'list_provider_surfaces');
+        return wrap(DIRECTORY);
+      },
+    });
+    statusEl.textContent = 'WebMCP detected — resolver tool registered';
+    statusEl.className = 'ok';
+    detailEl.textContent = '(list_provider_surfaces is discoverable)';
+    logEvent('webmcp_present');
+    logEvent('tool_registered', 'list_provider_surfaces');
+  } catch (err) {
+    statusEl.textContent = 'WebMCP present but registration failed';
+    statusEl.className = 'bad';
+    detailEl.textContent = String(err && err.message || err);
+    logEvent('tool_register_failed', String(err && err.message || err));
+  }
+})();
+</script>
+</body>
+</html>
