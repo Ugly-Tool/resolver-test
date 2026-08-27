@@ -1,0 +1,273 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Signpost — journey-blind capability resolver</title>
+<style>
+  :root { color-scheme: light dark; --fg:#111; --bg:#fafafa; --card:#fff; --line:#e5e5e5; --mut:#666; --ok:#0a7f4b; --warn:#a15c00; --bad:#b3261e; --mono:ui-monospace,SFMono-Regular,Menlo,monospace; }
+  @media (prefers-color-scheme: dark){ :root{ --fg:#eee; --bg:#0f0f10; --card:#171718; --line:#2a2a2c; --mut:#9a9a9a; } }
+  * { box-sizing:border-box; } body { margin:0; font:15px/1.5 system-ui,sans-serif; color:var(--fg); background:var(--bg); }
+  main { max-width:860px; margin:0 auto; padding:28px 20px 64px; }
+  h1 { font-size:22px; margin:0 0 4px; } .sub { color:var(--mut); margin:0 0 22px; }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:16px 18px; margin:14px 0; }
+  h2 { font-size:14px; text-transform:uppercase; letter-spacing:.04em; color:var(--mut); margin:0 0 10px; }
+  code, .mono { font-family:var(--mono); font-size:13px; } .pill { display:inline-block; padding:2px 8px; border:1px solid var(--line); border-radius:999px; font-size:12px; }
+  table { width:100%; border-collapse:collapse; font-size:13px; } td,th { text-align:left; padding:6px 8px; border-bottom:1px solid var(--line); vertical-align:top; } th { color:var(--mut); font-weight:600; }
+  #status { font-weight:600; } #status.ok{color:var(--ok)} #status.bad{color:var(--bad)} #status.warn{color:var(--warn)}
+  ol#log { margin:0; padding-left:0; list-style:none; font-family:var(--mono); font-size:12.5px; max-height:340px; overflow:auto; }
+  ol#log li { padding:4px 0; border-bottom:1px dashed var(--line); }
+  ol#log .k { display:inline-block; min-width:120px; color:var(--mut); }
+  .kind-resolve_surface_called { color:var(--ok); font-weight:600; } .kind-webmcp_absent{ color:var(--warn); }
+  .kind-declaration_load_failed, .kind-tool_register_failed { color:var(--bad); font-weight:600; }
+  .row { display:flex; gap:8px; flex-wrap:wrap; align-items:center; } button { font:inherit; padding:6px 12px; border:1px solid var(--line); background:var(--card); color:var(--fg); border-radius:8px; cursor:pointer; }
+  .muted { color:var(--mut); font-size:13px; }
+  .dot { display:inline-block; width:9px; height:9px; border-radius:50%; margin-right:6px; vertical-align:middle; }
+  .dot.ok{background:var(--ok)} .dot.bad{background:var(--bad)} .dot.wait{background:var(--warn)}
+  .try { display:flex; gap:8px; margin-top:8px; } .try input { flex:1; font:inherit; padding:6px 10px; border:1px solid var(--line); border-radius:8px; background:var(--bg); color:var(--fg); }
+</style>
+</head>
+<body>
+<main>
+  <h1>Signpost</h1>
+  <p class="sub">A <strong>journey-blind</strong> capability resolver. Providers declare their own
+    capabilities at their own origins; Signpost fetches those declarations and answers exactly one
+    question — <em>“where can capability&nbsp;X be performed?”</em> — by transparent lexical retrieval over
+    the providers’ <strong>own words</strong>. It holds no objective, session, cursor, sequence, history, or
+    “next”. The generic agent owns the whole journey.</p>
+
+  <div class="card">
+    <h2>WebMCP status</h2>
+    <p><span id="status">checking…</span> <span class="muted" id="status-detail"></span></p>
+    <p class="muted">One tool registered here: <code>resolve_surface({ capability })</code> — one capability
+      need in, candidate provider surface(s) out. No stepping, no cursor, no coordinator.</p>
+  </div>
+
+  <div class="card">
+    <h2>Seeded provider declarations (fetched live from each provider origin)</h2>
+    <table id="providers"><tr><th>Declaration URL</th><th>Status</th><th>Capabilities declared</th></tr></table>
+    <p id="cors-verdict" class="muted">checking cross-origin fetch…</p>
+    <p class="muted"><strong>This is the production CORS check.</strong> Each row is a live cross-origin
+      <code>fetch()</code> of that provider's declaration from its own origin. Two green dots (and the
+      verdict above) mean the wildcard CORS on <code>/agent-capabilities.json</code> is working in
+      production — screenshot this to capture the check. A red row is a CORS or deploy failure for that one
+      provider; Signpost degrades per-provider and still serves the others.</p>
+    <p class="muted">Signpost is seeded with <strong>declaration URLs only</strong>. The capability
+      <code>id</code> + <code>description</code> below are fetched from the provider-controlled origins at
+      load time — Signpost authors none of the meaning. Ecosystem-scale discovery is out of scope.</p>
+  </div>
+
+  <div class="card">
+    <h2>Try a lookup (human sanity check — same code path the agent hits)</h2>
+    <div class="try">
+      <input id="probe" placeholder="e.g. book me a haircut" />
+      <button id="probe-go">resolve_surface</button>
+    </div>
+    <div id="probe-out" class="muted" style="margin-top:8px"></div>
+    <p class="muted">This calls the exact retrieval the WebMCP tool uses. The <strong>public</strong> tool
+      output is candidates only — <code>{ surface_url, capability{ id, description } }</code>. Retrieval
+      score stays diagnostic (shown here + in the log), out of the v1 public contract.</p>
+  </div>
+
+  <div class="card">
+    <h2>Instrumentation — Signpost’s own event log (journey-blind)</h2>
+    <div class="row" style="margin-bottom:10px">
+      <button id="copy">Copy log</button>
+      <button id="clear">Clear log</button>
+      <span class="muted">Mirrored to the console with <code>[SIGNPOST]</code> and persisted in this
+        origin’s <code>localStorage</code>. Each entry is <strong>independent</strong> — no session id, no
+        cross-call correlation. The index is byte-identical before and after any run.</span>
+    </div>
+    <ol id="log"></ol>
+  </div>
+</main>
+
+<script type="module">
+import { buildIndex, resolve, toPublicContract } from './retrieve.js';
+
+// ── Seed: provider DECLARATION URLs only. Nothing else about the providers is
+// known to Signpost a priori — no tools, no capability wording, no ordering.
+const DECLARATION_URLS = [
+  'https://valentincoffee.cafe/agent-capabilities.json',
+  'https://timothygeorge.design/agent-capabilities.json',
+];
+
+// ── Instrumentation ──────────────────────────────────────────────────────────
+const LS_KEY = 'signpost-log';
+const logEl = document.getElementById('log');
+const loadLog = () => { try { return JSON.parse(localStorage.getItem(LS_KEY) || '[]'); } catch { return []; } };
+const saveLog = (a) => { try { localStorage.setItem(LS_KEY, JSON.stringify(a.slice(-200))); } catch {} };
+let events = loadLog();
+const escapeHtml = (s) => String(s).replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]));
+function render() {
+  logEl.innerHTML = '';
+  for (const e of events) {
+    const li = document.createElement('li');
+    li.className = 'kind-' + e.kind;
+    li.innerHTML = '<span class="k">' + e.t + '</span><strong>' + e.kind + '</strong>' +
+      (e.detail ? ' — ' + escapeHtml(e.detail) : '');
+    logEl.appendChild(li);
+  }
+  logEl.scrollTop = logEl.scrollHeight;
+}
+function logEvent(kind, detail) {
+  const e = { t: new Date().toISOString().slice(11, 23), kind, detail: detail || '' };
+  events.push(e); saveLog(events); render();
+  console.info('[SIGNPOST]', e.t, kind, detail || '');
+}
+document.getElementById('copy').onclick = () =>
+  navigator.clipboard?.writeText(events.map((e) => `${e.t} ${e.kind} ${e.detail}`).join('\n'));
+document.getElementById('clear').onclick = () => { events = []; saveLog(events); render(); logEvent('log_cleared'); };
+render();
+logEvent('page_loaded', 'referrer=' + (document.referrer || '(none)'));
+
+// ── Fetch the seeded declarations from provider origins, then build the index.
+// A fetch/CORS/shape failure is recorded as a finding — retrieval simply
+// proceeds over whatever loaded. The index is the ONLY state Signpost holds,
+// and it is a pure function of the current declarations (no journey in it).
+const providersEl = document.getElementById('providers');
+const providerRows = new Map();
+for (const url of DECLARATION_URLS) {
+  const tr = document.createElement('tr');
+  tr.innerHTML = `<td class="mono">${escapeHtml(url)}</td>` +
+    `<td><span class="dot wait"></span><span class="st">loading…</span></td><td class="caps muted">—</td>`;
+  providersEl.appendChild(tr);
+  providerRows.set(url, tr);
+}
+function setProviderRow(url, ok, statusText, caps) {
+  const tr = providerRows.get(url); if (!tr) return;
+  tr.querySelector('.dot').className = 'dot ' + (ok ? 'ok' : 'bad');
+  tr.querySelector('.st').textContent = statusText;
+  if (caps) tr.querySelector('.caps').innerHTML = caps.map((c) =>
+    `<code>${escapeHtml(c.id)}</code> — ${escapeHtml(c.description)}`).join('<br>');
+}
+
+async function loadDeclarations() {
+  const declarations = [];
+  await Promise.all(DECLARATION_URLS.map(async (url) => {
+    try {
+      const res = await fetch(url, { method: 'GET', mode: 'cors', cache: 'no-store' });
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+      const decl = await res.json();
+      if (!decl || typeof decl.surface_url !== 'string' || !Array.isArray(decl.capabilities)) {
+        throw new Error('malformed declaration (expected { surface_url, capabilities:[] })');
+      }
+      declarations.push(decl);
+      setProviderRow(url, true, `ok — ${decl.surface_url}`, decl.capabilities);
+      logEvent('declaration_loaded', `${url} → ${decl.capabilities.length} capability(ies)`);
+    } catch (err) {
+      setProviderRow(url, false, 'FAILED: ' + (err && err.message || err), null);
+      logEvent('declaration_load_failed', `${url} — ${err && err.message || err}`);
+    }
+  }));
+  return declarations;
+}
+
+// index + a promise that resolves once the first index build completes, so the
+// tool can be registered immediately and still await a ready index.
+let INDEX = buildIndex([]);
+let indexReadyResolve;
+const indexReady = new Promise((r) => { indexReadyResolve = r; });
+loadDeclarations().then((declarations) => {
+  INDEX = buildIndex(declarations);
+  const capCount = INDEX.entries.length;
+  logEvent('index_built', `${capCount} capability(ies) from ${declarations.length} provider(s)`);
+  // Aggregate the live cross-origin fetch result into an explicit, capturable
+  // production CORS verdict.
+  const total = DECLARATION_URLS.length;
+  const ok = declarations.length;
+  const verdictEl = document.getElementById('cors-verdict');
+  let verdict;
+  if (ok === total) verdict = { cls: 'ok', text: `✓ Production CORS OK — ${ok}/${total} provider declarations fetched cross-origin.` };
+  else if (ok === 0) verdict = { cls: 'bad', text: `✗ Production CORS FAILED — 0/${total} declarations fetched cross-origin (CORS or deploy).` };
+  else verdict = { cls: 'warn', text: `⚠ Partial — ${ok}/${total} fetched cross-origin; ${total - ok} failed (see red row). Signpost still serves the loaded provider(s).` };
+  if (verdictEl) { verdictEl.textContent = verdict.text; verdictEl.style.color = `var(--${verdict.cls})`; verdictEl.style.fontWeight = '600'; }
+  logEvent('cors_check', `${ok}/${total} cross-origin fetch ok — ${verdict.cls}`);
+  // Signal for mechanical harnesses that the first index build has completed.
+  try { window.__signpostReady = true; } catch {}
+  indexReadyResolve();
+});
+
+// ── Human sanity-check probe (same retrieval as the tool) ─────────────────────
+const probe = document.getElementById('probe');
+const probeOut = document.getElementById('probe-out');
+async function runProbe() {
+  await indexReady;
+  const q = probe.value.trim(); if (!q) return;
+  const r = resolve(INDEX, q);
+  if (!r.matches.length) { probeOut.innerHTML = '<span style="color:var(--warn)">no match — retrieval miss (a finding)</span>'; return; }
+  probeOut.innerHTML = r.matches.map((m) =>
+    `<div><code>${escapeHtml(m.capability.id)}</code> @ <code>${escapeHtml(m.surface_url)}</code> ` +
+    `<span class="pill">score ${m.score}</span></div>`).join('');
+}
+document.getElementById('probe-go').onclick = runProbe;
+probe.addEventListener('keydown', (e) => { if (e.key === 'Enter') runProbe(); });
+
+// ── WebMCP registration (native; feature-detected; no-op when absent) ─────────
+const usable = (c) => c && typeof c.registerTool === 'function';
+const mc =
+  (typeof document !== 'undefined' && usable(document.modelContext) && document.modelContext) ||
+  (typeof navigator !== 'undefined' && usable(navigator.modelContext) && navigator.modelContext) ||
+  (typeof navigator !== 'undefined' && usable(navigator.modelContextTesting) && navigator.modelContextTesting) ||
+  null;
+
+const statusEl = document.getElementById('status');
+const detailEl = document.getElementById('status-detail');
+if (!mc) {
+  statusEl.textContent = 'WebMCP not detected';
+  statusEl.className = 'bad';
+  detailEl.textContent = '(no document.modelContext / navigator.modelContext). Page is inert for humans; a WebMCP-capable agent is required to exercise the tool.';
+  logEvent('webmcp_absent', 'no modelContext on this browser');
+} else {
+  try {
+    mc.registerTool({
+      name: 'resolve_surface',
+      description:
+        'Find which provider surface can perform ONE capability you need, described in your own words. ' +
+        'Input: { capability: "<a single capability need, e.g. \'order a coffee\' or \'book a haircut\'>" }. ' +
+        'Returns candidate provider surface(s) — each a { surface_url, capability } you can navigate to and ' +
+        'where you then DISCOVER and call that provider’s own native tools. This resolver is STATELESS and ' +
+        'JOURNEY-BLIND: it does not know your overall objective, does not track progress, order, or history, ' +
+        'and cannot tell you what to do next. Call it once per capability need. You own the plan and the ' +
+        'sequencing; Signpost only points to where a single capability can be performed.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          capability: {
+            type: 'string',
+            description: 'A single capability need, in natural language. Not the whole objective — one thing you want to do.',
+          },
+        },
+        required: ['capability'],
+        additionalProperties: false,
+      },
+      async execute(args) {
+        await indexReady;
+        const capability = args && typeof args.capability === 'string' ? args.capability : '';
+        // Pure, stateless retrieval. Diagnostic result carries score + token hits.
+        const diag = resolve(INDEX, capability);
+        // PUBLIC contract projection — candidates only, no score/hits/query echo.
+        const publicResult = toPublicContract(diag);
+        // Journey-blind instrumentation: log THIS call independently. Record the
+        // query, its tokens, and the diagnostic top matches (score included, as
+        // diagnostic metadata only). No session, no correlation to other calls.
+        const topDiag = diag.matches.map((m) => `${m.capability.id}@${new URL(m.surface_url).host}=${m.score}`).join(', ') || '(none)';
+        logEvent('resolve_surface_called', `q=${JSON.stringify(capability)} tokens=[${diag.query_tokens.join(' ')}] → ${topDiag}`);
+        return { content: [{ type: 'text', text: JSON.stringify(publicResult, null, 2) }] };
+      },
+    });
+    statusEl.textContent = 'WebMCP detected — resolve_surface registered';
+    statusEl.className = 'ok';
+    detailEl.textContent = '(resolve_surface is discoverable)';
+    logEvent('webmcp_present');
+    logEvent('tool_registered', 'resolve_surface');
+  } catch (err) {
+    statusEl.textContent = 'WebMCP present but registration failed';
+    statusEl.className = 'bad';
+    detailEl.textContent = String(err && err.message || err);
+    logEvent('tool_register_failed', String(err && err.message || err));
+  }
+}
+</script>
+</body>
+</html>
