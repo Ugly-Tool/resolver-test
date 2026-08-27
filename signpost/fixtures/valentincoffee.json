@@ -1,0 +1,9 @@
+{
+  "surface_url": "https://valentincoffee.cafe",
+  "capabilities": [
+    {
+      "id": "order_coffee_for_pickup",
+      "description": "Order a coffee for pickup at Valentin Coffee. A small specialty cafe serving single-origin drip, espresso pulled on a house blend, lattes, and cafe mochas from a short, deliberate menu. Drinks can be sized and customized (milk choice), priced, and confirmed with a pickup time. This is a demonstration cafe; ordering places a mock order and takes no payment."
+    }
+  ]
+}
