@@ -145,5 +145,35 @@ console.log('\n── Meaning is provider-authored (Signpost injects no taxonomy
     r.matches.every((m) => declared.has(`${m.surface_url}::${m.capability.id}::${m.capability.description}`)));
 }
 
+console.log('\n── Declaration proxy is not an open proxy (SSRF guard) ──');
+{
+  const { createRequire } = await import('node:module');
+  const require = createRequire(import.meta.url);
+  const handler = require('./api/declaration.js');
+  const mockRes = () => {
+    const r = { _status: 200, _headers: {}, _body: null };
+    r.setHeader = (k, v) => { r._headers[k.toLowerCase()] = v; };
+    r.status = (c) => { r._status = c; return r; };
+    r.json = (o) => { r._body = o; return r; };
+    r.send = (s) => { r._body = s; return r; };
+    return r;
+  };
+  // Disallowed URL → 400 before any network call, with the allowlist echoed.
+  const r1 = mockRes();
+  await handler({ query: { url: 'https://evil.example/secret' } }, r1);
+  check('disallowed url rejected with 400 (no fetch)', r1._status === 400 && r1._body && r1._body.error === 'url not in allowlist');
+  check('rejection echoes the seed allowlist only', Array.isArray(r1._body.allowed) &&
+    r1._body.allowed.length === 2 &&
+    r1._body.allowed.every((u) => u.endsWith('/agent-capabilities.json')));
+  // Missing url → 400 too.
+  const r2 = mockRes();
+  await handler({ query: {} }, r2);
+  check('missing url rejected with 400', r2._status === 400);
+  // A metadata/internal target is not on the allowlist → rejected.
+  const r3 = mockRes();
+  await handler({ query: { url: 'http://169.254.169.254/latest/meta-data/' } }, r3);
+  check('internal metadata URL rejected (SSRF blocked)', r3._status === 400);
+}
+
 console.log(`\n${fail === 0 ? '✓ ALL PASS' : '✗ FAILURES'} — ${pass} passed, ${fail} failed.`);
 if (fail > 0) { for (const f of failures) console.log('   • ' + f); process.exit(1); }

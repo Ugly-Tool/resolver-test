@@ -44,14 +44,16 @@
   </div>
 
   <div class="card">
-    <h2>Seeded provider declarations (fetched live from each provider origin)</h2>
+    <h2>Seeded provider declarations (fetched live from each provider origin, via same-origin proxy)</h2>
     <table id="providers"><tr><th>Declaration URL</th><th>Status</th><th>Capabilities declared</th></tr></table>
-    <p id="cors-verdict" class="muted">checking cross-origin fetch…</p>
-    <p class="muted"><strong>This is the production CORS check.</strong> Each row is a live cross-origin
-      <code>fetch()</code> of that provider's declaration from its own origin. Two green dots (and the
-      verdict above) mean the wildcard CORS on <code>/agent-capabilities.json</code> is working in
-      production — screenshot this to capture the check. A red row is a CORS or deploy failure for that one
-      provider; Signpost degrades per-provider and still serves the others.</p>
+    <p id="cors-verdict" class="muted">loading declarations…</p>
+    <p class="muted"><strong>This is the production declaration-load check.</strong> Each row is a live fetch
+      of that provider's declaration, routed through Signpost's own same-origin proxy
+      (<code>/api/declaration</code>), which fetches the provider's file server-to-server — so no browser CORS
+      is involved (the prior "Vercel as proxy" pattern). The declaration stays provider-originated: the proxy
+      returns each provider's own bytes verbatim. Two green dots (and the verdict above) mean both
+      declarations resolve end-to-end in production — screenshot this to capture the check. A red row is a
+      per-provider load failure; Signpost degrades per-provider and still serves the others.</p>
     <p class="muted">Signpost is seeded with <strong>declaration URLs only</strong>. The capability
       <code>id</code> + <code>description</code> below are fetched from the provider-controlled origins at
       load time — Signpost authors none of the meaning. Ecosystem-scale discovery is out of scope.</p>
@@ -146,7 +148,9 @@ async function loadDeclarations() {
   const declarations = [];
   await Promise.all(DECLARATION_URLS.map(async (url) => {
     try {
-      const res = await fetch(url, { method: 'GET', mode: 'cors', cache: 'no-store' });
+      // Route through Signpost's own same-origin proxy so no browser CORS is
+      // involved; the proxy fetches the provider's own file server-to-server.
+      const res = await fetch('/api/declaration?url=' + encodeURIComponent(url), { method: 'GET', cache: 'no-store' });
       if (!res.ok) throw new Error('HTTP ' + res.status);
       const decl = await res.json();
       if (!decl || typeof decl.surface_url !== 'string' || !Array.isArray(decl.capabilities)) {
@@ -178,11 +182,11 @@ loadDeclarations().then((declarations) => {
   const ok = declarations.length;
   const verdictEl = document.getElementById('cors-verdict');
   let verdict;
-  if (ok === total) verdict = { cls: 'ok', text: `✓ Production CORS OK — ${ok}/${total} provider declarations fetched cross-origin.` };
-  else if (ok === 0) verdict = { cls: 'bad', text: `✗ Production CORS FAILED — 0/${total} declarations fetched cross-origin (CORS or deploy).` };
-  else verdict = { cls: 'warn', text: `⚠ Partial — ${ok}/${total} fetched cross-origin; ${total - ok} failed (see red row). Signpost still serves the loaded provider(s).` };
+  if (ok === total) verdict = { cls: 'ok', text: `✓ Declarations loaded — ${ok}/${total} resolved via same-origin proxy.` };
+  else if (ok === 0) verdict = { cls: 'bad', text: `✗ Declarations FAILED — 0/${total} loaded (proxy or provider deploy).` };
+  else verdict = { cls: 'warn', text: `⚠ Partial — ${ok}/${total} loaded; ${total - ok} failed (see red row). Signpost still serves the loaded provider(s).` };
   if (verdictEl) { verdictEl.textContent = verdict.text; verdictEl.style.color = `var(--${verdict.cls})`; verdictEl.style.fontWeight = '600'; }
-  logEvent('cors_check', `${ok}/${total} cross-origin fetch ok — ${verdict.cls}`);
+  logEvent('declarations_check', `${ok}/${total} loaded — ${verdict.cls}`);
   // Signal for mechanical harnesses that the first index build has completed.
   try { window.__signpostReady = true; } catch {}
   indexReadyResolve();
