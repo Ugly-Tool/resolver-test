@@ -37,14 +37,15 @@ avoid. Full design rationale: `../signpost-design/signpost-proposal.md`.
 
 | File | Role |
 |---|---|
-| `index.html` | The Signpost page. Seeds **declaration URLs only**, fetches them from the provider origins, builds a lexical index, and registers the single WebMCP tool `resolve_surface`. |
+| `index.html` | The Signpost page. Seeds **declaration URLs only**, loads them through the same-origin proxy, builds a lexical index, and registers the single WebMCP tool `resolve_surface`. |
+| `api/declaration.js` | Same-origin declaration **proxy** (Vercel Node function). Fetches a seeded provider declaration server-to-server (no browser CORS) and relays it verbatim; allowlist-guarded (not an open proxy). |
 | `retrieve.js` | Pure, side‑effect‑free retrieval engine. No embeddings, no model dependency — every score is visible token overlap. Imported unchanged by the page and by the verifiers. |
-| `verify.mjs` | Node mechanical checks of the retrieval engine + Contract‑B invariants. `node verify.mjs` |
-| `verify-browser.mjs` | Playwright + WebMCP‑polyfill checks of the actual page pipeline (fetch → index → register → execute → public projection). `PLAYWRIGHT_BROWSERS_PATH=/opt/pw-browsers node verify-browser.mjs` |
-| `fixtures/` | Local copies of the two provider declarations, for offline verification. The **live** declarations are served from the provider origins. |
-| `docs/architecture-decision-record.md` | Internal source-of-truth design record — full rationale (prior/new boundary, contracts + exclusions, journey-state boundary, CORS decision, degradation, lexical findings, T1/T2, claims/limits, commits). |
+| `verify.mjs` | Node mechanical checks of the retrieval engine + Contract‑B invariants + the proxy SSRF guard. `node verify.mjs` |
+| `verify-browser.mjs` | Playwright + WebMCP‑polyfill checks of the actual page pipeline (proxy fetch → index → register → execute → public projection). `PLAYWRIGHT_BROWSERS_PATH=/opt/pw-browsers node verify-browser.mjs` |
+| `fixtures/` | Local copies of the two provider declarations, for offline verification. The **live** declarations are fetched by the proxy from the provider origins. |
+| `docs/architecture-decision-record.md` | Internal source-of-truth design record — full rationale (prior/new boundary, contracts + exclusions, journey-state boundary, proxy acquisition + CORS history, degradation, lexical findings, T1/T2, claims/limits, commits). |
 
-Both verifiers are green (21 + 22 checks). Run them before deploying.
+Both verifiers are green (25 + 24 checks). Run them before deploying.
 
 ## The two contracts (v1)
 
@@ -183,33 +184,47 @@ v2 — chosen against for v1 precisely so the match stays inspectable.
   Dial‑1 resolver at the repo **root** `index.html` is untouched — its freeze is
   anchored to commit `3cc241c`, which adding a subdirectory does not alter.
 
-Signpost is a single static page — no build step; `retrieve.js` and `index.html`
-are served as‑is. In the subdirectory the page's `./retrieve.js` import resolves
-to `/signpost/retrieve.js`; the page fetches the provider declarations by their
-absolute origin URLs, so the subpath does not affect resolution.
+Signpost is a page (`signpost/`) plus one serverless function (`api/declaration.js`).
+The page's `./retrieve.js` import resolves to `/signpost/retrieve.js`; the page loads
+declarations through the **absolute** same-origin path `/api/declaration?url=…`, so
+the subpath does not affect resolution. In `resolver-test` the function lives at the
+repo **root** `api/declaration.js` and serves at `/api/declaration` — the same
+absolute path in either layout.
+
+**Why a proxy (not a direct browser fetch).** A browser cross-origin `fetch()` of a
+provider-controlled file is gated by CORS, which the providers' `@astrojs/vercel`
+(Build Output API) setup did not reliably send. Rather than depend on a provider-side
+Vercel Build-Command setting we can't see, the page calls Signpost's **own**
+same-origin proxy, which fetches each provider's file **server-to-server** (no browser
+CORS) and relays it verbatim — the prior "Vercel as proxy" pattern. Meaning stays
+provider-originated; the proxy is allowlist-guarded (not an open proxy). See ADR §6.
 
 ## Deployment handoff
 
 **Prerequisite — provider declarations are live (done).** Both merged to their
-provider mains with path‑scoped wildcard CORS:
-- `Ugly-Tool/valentincoffee` PR **#18** → merged (`f208a5c`).
-- `Ugly-Tool/timothygeorge` PR **#3** → merged (`51922a5`).
+provider mains:
+- `Ugly-Tool/valentincoffee` PR **#18** → merged (`f208a5c`); CORS build-step PR **#19** (now moot).
+- `Ugly-Tool/timothygeorge` PR **#3** → merged (`51922a5`); CORS build-step PR **#4** (now moot).
+
+The provider-side CORS changes are harmless but no longer relied upon — the proxy
+removes the browser-CORS dependency entirely.
 
 **Deploy Signpost:**
-1. Land the `signpost/` subdirectory on `Ugly-Tool/resolver-test` `main` (via the
-   staging PR). Vercel auto‑deploys it at `resolver-test-mu.vercel.app/signpost/`.
-2. Open that URL in a browser. Status reads *"WebMCP not detected"* for a
+1. Land `signpost/` **and** `api/declaration.js` on `Ugly-Tool/resolver-test` `main`
+   (via the staging PR). Vercel auto‑deploys the page at
+   `resolver-test-mu.vercel.app/signpost/` and the function at `/api/declaration`
+   (zero-config — an `api/` file is deployed as a Serverless Function automatically).
+2. Open the `/signpost/` URL in a browser. Status reads *"WebMCP not detected"* for a
    non‑agent browser (correct — the page is inert for humans). Use the **Try a
    lookup** box to sanity‑check retrieval.
 
-**Empirical production CORS check (browser‑only, no curl):** the deployed page
-does the check itself. On load it runs a live cross‑origin `fetch()` of each
-provider's `/agent-capabilities.json` and renders a per‑provider dot plus an
-aggregate verdict line:
-- **✓ Production CORS OK — 2/2** (two green dots) → the wildcard CORS is working
-  in production. **Screenshot this; it is the production CORS check.**
-- **⚠ Partial / ✗ FAILED** with a red row → CORS or deploy problem for that one
-  provider; Signpost degrades per‑provider and still serves the loaded one.
+**Empirical production check (browser‑only, no curl):** the deployed page does it
+itself. On load it fetches each declaration through the proxy and renders a
+per‑provider dot plus an aggregate verdict:
+- **✓ Declarations loaded — 2/2** (two green dots) → both declarations resolve
+  end-to-end in production via the proxy. **Screenshot this; it is the check.**
+- **⚠ Partial / ✗ FAILED** with a red row → per‑provider load failure (proxy or
+  provider deploy); Signpost degrades per‑provider and still serves the loaded one.
 
 This is the authoritative production CORS verification for a cloud‑only operator
 — it exercises the exact cross‑origin fetch the agent's browser will make during

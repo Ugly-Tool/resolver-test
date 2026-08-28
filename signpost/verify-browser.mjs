@@ -30,18 +30,25 @@ const root = dirname(fileURLToPath(import.meta.url));
 const retrieveJs = readFileSync(join(root, 'retrieve.js'), 'utf8');
 const cafeDecl = readFileSync(join(root, 'fixtures', 'valentincoffee.json'), 'utf8');
 const salonDecl = readFileSync(join(root, 'fixtures', 'timothygeorge.json'), 'utf8');
-let html = readFileSync(join(root, 'index.html'), 'utf8');
-// Rewrite the seeded provider-origin URLs to local fixture paths.
-html = html
-  .replace('https://valentincoffee.cafe/agent-capabilities.json', '/fixtures/valentincoffee.json')
-  .replace('https://timothygeorge.design/agent-capabilities.json', '/fixtures/timothygeorge.json');
+const html = readFileSync(join(root, 'index.html'), 'utf8');
+// The page keeps the real provider-origin seed URLs and fetches each through
+// its same-origin proxy at /api/declaration?url=... . This local server mocks
+// that proxy exactly as the deployed Vercel function does: map an allowed
+// provider URL to its fixture bytes. No URL rewriting of the page is needed.
+const PROXY_MAP = new Map([
+  ['https://valentincoffee.cafe/agent-capabilities.json', cafeDecl],
+  ['https://timothygeorge.design/agent-capabilities.json', salonDecl],
+]);
 
-const send = (res, type, body) => { res.setHeader('content-type', type); res.setHeader('access-control-allow-origin', '*'); res.end(body); };
+const send = (res, type, body, code = 200) => { res.statusCode = code; res.setHeader('content-type', type); res.setHeader('access-control-allow-origin', '*'); res.end(body); };
 const server = http.createServer((req, res) => {
+  if (req.url.startsWith('/api/declaration')) {
+    const u = new URL(req.url, 'http://x').searchParams.get('url') || '';
+    if (PROXY_MAP.has(u)) return send(res, 'application/json', PROXY_MAP.get(u));
+    return send(res, 'application/json', JSON.stringify({ error: 'url not in allowlist' }), 400);
+  }
   if (req.url === '/' || req.url.startsWith('/index')) return send(res, 'text/html', html);
   if (req.url.startsWith('/retrieve.js')) return send(res, 'text/javascript', retrieveJs);
-  if (req.url.startsWith('/fixtures/valentincoffee.json')) return send(res, 'application/json', cafeDecl);
-  if (req.url.startsWith('/fixtures/timothygeorge.json')) return send(res, 'application/json', salonDecl);
   res.statusCode = 404; res.end('not found');
 });
 await new Promise((r) => server.listen(0, '127.0.0.1', r));
@@ -138,10 +145,10 @@ try {
     check(`event fired: ${k}`, blob.includes(k));
   }
 
-  console.log('\n── Production CORS verdict (capturable, driven by live fetch) ──');
-  check('cors_check event fired with both providers loaded', /cors_check.*2\/2.*ok/.test(blob), blob.split('\n').find((l) => l.includes('cors_check')) || 'no cors_check line');
+  console.log('\n── Declaration-load verdict (capturable, driven by live proxy fetch) ──');
+  check('declarations_check event fired with both providers loaded', /declarations_check.*2\/2.*ok/.test(blob), blob.split('\n').find((l) => l.includes('declarations_check')) || 'no declarations_check line');
   const verdict = await page.$eval('#cors-verdict', (el) => el.textContent).catch(() => '');
-  check('page shows a green "Production CORS OK" verdict', /Production CORS OK/.test(verdict) && verdict.startsWith('✓'), verdict);
+  check('page shows a green "Declarations loaded" verdict', /Declarations loaded/.test(verdict) && verdict.startsWith('✓'), verdict);
 
   console.log(`\n${fail === 0 ? '✓ ALL PASS' : '✗ FAILURES'} — ${pass} passed, ${fail} failed (browser mechanics).`);
 } finally {

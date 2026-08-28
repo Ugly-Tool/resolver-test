@@ -193,11 +193,34 @@ objective, a session, a cursor, sequencing, history, or a "next". It holds none.
 ## 6. Provider-origin acquisition + wildcard CORS decision
 
 **Acquisition:** Signpost is seeded with **declaration URLs only** — the two
-provider-controlled origins. At load it fetches each `agent-capabilities.json`
-client-side and reads `{id, description, surface_url}` from the provider origin, so
-capability meaning is genuinely provider-originated rather than baked into Signpost.
-Ecosystem-scale *discovery* of providers is explicitly out of scope; the seed set is
-fixed for the experiment.
+provider-controlled origins. At load it fetches each `agent-capabilities.json` and
+reads `{id, description, surface_url}` from the provider origin, so capability meaning
+is genuinely provider-originated rather than baked into Signpost. Ecosystem-scale
+*discovery* of providers is explicitly out of scope; the seed set is fixed.
+
+**Acquisition path — same-origin proxy (revised 2026-08-27, superseding the browser
+cross-origin fetch).** The page does **not** fetch the provider origins directly from
+the browser. It calls Signpost's own same-origin endpoint `/api/declaration?url=…`
+(a Vercel Node function), which fetches the provider's file **server-to-server** and
+returns its bytes verbatim. **Why the pivot:** a *browser* cross-origin `fetch()` of a
+provider-controlled file is gated by CORS, and the providers' `@astrojs/vercel`
+(Build Output API) setup did not reliably emit `Access-Control-Allow-Origin` — the
+adapter ignores a root `vercel.json` `headers` block, and a `buildCommand` header-
+injection workaround appears overridden by a provider-side Vercel dashboard Build
+Command we cannot see or change. The prior TreeFrog/Refraktor journeys never hit this
+because they aggregated provider data **server-side** ("Vercel as proxy") and the
+agent's provider interactions were top-level navigations + same-origin native tool
+calls — never a browser cross-origin fetch. The proxy restores that pattern.
+- **Meaning stays provider-originated.** The proxy is a dumb relay: it returns each
+  provider's own live file verbatim and authors nothing. Server-to-server vs
+  browser-to-server changes *who* makes the request, not *whose meaning* it carries.
+- **Journey-blind.** The proxy holds no objective/session/cursor/history; it fetches a
+  URL and returns bytes. It adds no coordinator surface.
+- **Not an open proxy (SSRF).** Only the seeded provider declaration URLs are on the
+  allowlist; anything else (including internal metadata IPs) is rejected 400 before any
+  fetch. Guarded by `verify.mjs`.
+- The provider-side wildcard-CORS change (PRs #18/#19, #3/#4) is now **moot** for
+  Signpost — left in place as harmless defense-in-depth, not relied upon.
 
 **CORS decision — wildcard, and why (ruling: keep as implemented, 2026-08-27):**
 each declaration ships with, scoped to `/agent-capabilities.json` **only** (not the
@@ -333,13 +356,14 @@ independent-party origination boundary (A5 simulation caveat).
 
 ## 12. Verification status
 
-- `verify.mjs` — **21/21** engine + Contract-B invariant checks (retrieval quality,
+- `verify.mjs` — **25/25** engine + Contract-B invariant checks (retrieval quality,
   compound-query-doesn't-decompose, public projection strips score, statelessness/
   purity/index-immutability/rebuild-determinism, provider-authored meaning, pinned
-  negation-blindness finding).
-- `verify-browser.mjs` — **22/22** Playwright + WebMCP-polyfill checks of the real page
-  pipeline (fetch → index → register → execute → public projection), against local
-  declaration fixtures, incl. the score-split and per-provider load.
+  negation-blindness finding, and the declaration-proxy SSRF allowlist guard).
+- `verify-browser.mjs` — **24/24** Playwright + WebMCP-polyfill checks of the real page
+  pipeline (proxy fetch → index → register → execute → public projection), against a
+  mocked `/api/declaration` proxy over local fixtures, incl. the score-split, the
+  capturable declaration-load verdict, and per-provider load.
 
 The **live** experiment (ChatGPT WebMCP browser, one compound-objective prompt,
 observe query shape) is manual capture, archived under `runs/` mirroring the Dial-1
